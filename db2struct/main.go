@@ -24,6 +24,7 @@ var structName = goopt.String([]string{"--struct"}, "", "name to set for struct"
 
 var jsonAnnotation = goopt.Flag([]string{"--json"}, []string{"--no-json"}, "Add json annotations (default)", "Disable json annotations")
 var gormAnnotation = goopt.Flag([]string{"--gorm"}, []string{}, "Add gorm annotations (tags)", "")
+var structType = goopt.String([]string{"-H", "--struct-type"}, "", "Model DTO")
 var gureguTypes = goopt.Flag([]string{"--guregu"}, []string{}, "Add guregu null types", "")
 
 func init() {
@@ -96,7 +97,7 @@ func main() {
 		*packageName = "newpackage"
 	}
 	// Generate struct string based on columnDataTypes
-	struc, err := db2struct.Generate(*columnDataTypes, *mariadbTable, *structName, *packageName, *jsonAnnotation, *gormAnnotation, *gureguTypes)
+	struc, err := db2struct.Generate(*columnDataTypes, *mariadbTable, *structName, *packageName, *jsonAnnotation, *gormAnnotation, *gureguTypes, *structType)
 
 	if err != nil {
 		fmt.Println("Error in creating struct from json: " + err.Error())

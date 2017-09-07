@@ -8,6 +8,63 @@ import (
 	"unicode"
 )
 
+const (
+	PrefixModel string = "Model"
+	PrefixLogic string = ""
+	PrefixDTO   string = "DTO"
+)
+
+var mapping map[string]map[string]string = map[string]map[string]string{
+	PrefixModel: map[string]string{
+		golangByteArray:  "[]byte",
+		gureguNullInt:    "null.Int",
+		sqlNullInt:       "sql.NullInt64",
+		golangInt:        "int",
+		golangInt64:      "int64",
+		gureguNullFloat:  "null.Float",
+		sqlNullFloat:     "sql.NullFloat64",
+		golangFloat:      "float",
+		golangFloat32:    "float32",
+		golangFloat64:    "float64",
+		gureguNullString: "null.String",
+		sqlNullString:    "sql.NullString",
+		gureguNullTime:   "null.Time",
+		golangTime:       "time.Time",
+	},
+	PrefixDTO: map[string]string{
+		golangByteArray:  "[]byte",
+		gureguNullInt:    "*int",
+		sqlNullInt:       "*int64",
+		golangInt:        "int",
+		golangInt64:      "uint64",
+		gureguNullFloat:  "*float64",
+		sqlNullFloat:     "*float64",
+		golangFloat:      "*float",
+		golangFloat32:    "*float32",
+		golangFloat64:    "*float64",
+		gureguNullString: "*string",
+		sqlNullString:    "*string",
+		gureguNullTime:   "*time.Time",
+		golangTime:       "time.Time",
+	},
+	PrefixLogic: map[string]string{
+		golangByteArray:  "[]byte",
+		gureguNullInt:    "int",
+		sqlNullInt:       "int",
+		golangInt:        "int",
+		golangInt64:      "uint64",
+		gureguNullFloat:  "float64",
+		sqlNullFloat:     "float64",
+		golangFloat:      "float",
+		golangFloat32:    "float32",
+		golangFloat64:    "float64",
+		gureguNullString: "string",
+		sqlNullString:    "string",
+		gureguNullTime:   "*time.Time",
+		golangTime:       "time.Time",
+	},
+}
+
 // Constants for return types of golang
 const (
 	golangByteArray  = "[]byte"
@@ -81,12 +138,12 @@ var Debug = false
 
 // Generate Given a Column map with datatypes and a name structName,
 // attempts to generate a struct definition
-func Generate(columnTypes map[string]map[string]string, tableName string, structName string, pkgName string, jsonAnnotation bool, gormAnnotation bool, gureguTypes bool) ([]byte, error) {
+func Generate(columnTypes map[string]map[string]string, tableName string, structName string, pkgName string, jsonAnnotation bool, gormAnnotation bool, gureguTypes bool, structType string) ([]byte, error) {
 	var dbTypes string
-	dbTypes = generateMysqlTypes(columnTypes, 0, jsonAnnotation, gormAnnotation, gureguTypes)
+	dbTypes = generateMysqlTypes(columnTypes, 0, jsonAnnotation, gormAnnotation, gureguTypes, structType)
 	src := fmt.Sprintf("package %s\ntype %s %s}",
 		pkgName,
-		structName,
+		structName+structType,
 		dbTypes)
 	if gormAnnotation == true {
 		tableNameFunc := "// TableName sets the insert table name for this struct type\n" +

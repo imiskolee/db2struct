@@ -61,7 +61,7 @@ func GetColumnsFromMysqlTable(mariadbUser string, mariadbPassword string, mariad
 }
 
 // Generate go struct entries for a map[string]interface{} structure
-func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotation bool, gormAnnotation bool, gureguTypes bool) string {
+func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotation bool, gormAnnotation bool, gureguTypes bool, structType string) string {
 	structure := "struct {"
 
 	keys := make([]string, 0, len(obj))
@@ -81,7 +81,7 @@ func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotat
 		var valueType string
 		// If the guregu (https://github.com/guregu/null) CLI option is passed use its types, otherwise use go's sql.NullX
 
-		valueType = mysqlTypeToGoType(mysqlType["value"], nullable, gureguTypes)
+		valueType = mysqlTypeToGoType(mysqlType["value"], nullable, gureguTypes, structType)
 
 		fieldName := fmtFieldName(stringifyFirstChar(key))
 		var annotations []string
@@ -107,55 +107,55 @@ func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotat
 }
 
 // mysqlTypeToGoType converts the mysql types to go compatible sql.Nullable (https://golang.org/pkg/database/sql/) types
-func mysqlTypeToGoType(mysqlType string, nullable bool, gureguTypes bool) string {
+func mysqlTypeToGoType(mysqlType string, nullable bool, gureguTypes bool, structType string) string {
 	switch mysqlType {
 	case "tinyint", "int", "smallint", "mediumint":
 		if nullable {
 			if gureguTypes {
-				return gureguNullInt
+				return mapping[structType][gureguNullInt]
 			}
-			return sqlNullInt
+			return mapping[structType][sqlNullInt]
 		}
-		return golangInt
+		return mapping[structType][golangInt]
 	case "bigint":
 		if nullable {
 			if gureguTypes {
-				return gureguNullInt
+				return mapping[structType][gureguNullInt]
 			}
-			return sqlNullInt
+			return mapping[structType][sqlNullInt]
 		}
-		return golangInt64
+		return mapping[structType][golangInt64]
 	case "char", "enum", "varchar", "longtext", "mediumtext", "text", "tinytext":
 		if nullable {
 			if gureguTypes {
-				return gureguNullString
+				return mapping[structType][gureguNullString]
 			}
-			return sqlNullString
+			return mapping[structType][sqlNullString]
 		}
 		return "string"
 	case "date", "datetime", "time", "timestamp":
 		if nullable && gureguTypes {
-			return gureguNullTime
+			return mapping[structType][gureguNullTime]
 		}
-		return golangTime
+		return mapping[structType][golangTime]
 	case "decimal", "double":
 		if nullable {
 			if gureguTypes {
-				return gureguNullFloat
+				return mapping[structType][gureguNullFloat]
 			}
-			return sqlNullFloat
+			return mapping[structType][sqlNullFloat]
 		}
-		return golangFloat64
+		return mapping[structType][golangFloat64]
 	case "float":
 		if nullable {
 			if gureguTypes {
-				return gureguNullFloat
+				return mapping[structType][gureguNullFloat]
 			}
-			return sqlNullFloat
+			return mapping[structType][sqlNullFloat]
 		}
-		return golangFloat32
+		return mapping[structType][golangFloat32]
 	case "binary", "blob", "longblob", "mediumblob", "varbinary":
-		return golangByteArray
+		return mapping[structType][golangByteArray]
 	}
 	return ""
 }
