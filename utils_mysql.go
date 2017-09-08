@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,9 +62,11 @@ func GetColumnsFromMysqlTable(mariadbUser string, mariadbPassword string, mariad
 }
 
 // Generate go struct entries for a map[string]interface{} structure
-func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotation bool, gormAnnotation bool, gureguTypes bool, structType string) string {
+func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotation bool, gormAnnotation bool, gureguTypes bool, structType string) (string, string, string) {
 	structure := "struct {"
 
+	from := ""
+	to := ""
 	keys := make([]string, 0, len(obj))
 	for key := range obj {
 		keys = append(keys, key)
@@ -82,6 +85,7 @@ func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotat
 		// If the guregu (https://github.com/guregu/null) CLI option is passed use its types, otherwise use go's sql.NullX
 
 		valueType = mysqlTypeToGoType(mysqlType["value"], nullable, gureguTypes, structType)
+		realType := mysqlRealType(mysqlType["value"], nullable, gureguTypes, structType)
 
 		fieldName := fmtFieldName(stringifyFirstChar(key))
 		var annotations []string
@@ -102,8 +106,137 @@ func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotat
 				fieldName,
 				valueType)
 		}
+		fname := "s." + fieldName
+		tname := "t." + fieldName
+		fval := fname
+		tval := tname
+		if structType == PrefixModel {
+			switch valueType {
+			case "sql.NullInt64", "sql.NullInt", "sql.NullFloat64", "sql.NullString":
+				reg, _ := regexp.Compile("Null(\\w+)")
+				t := reg.FindStringSubmatch(valueType)
+				zeroValue := "0"
+				if t[1] == "Int" || t[1] == "Int64" {
+					zeroValue = "0"
+				} else if t[1] == "Float64" {
+					zeroValue = "0.0"
+				} else {
+					zeroValue = "\"\""
+				}
+
+				if realType == sqlNullInt {
+					fval = "int(" + (fname) + "." + (t[1]) + ")"
+					tval = "int64(" + (tname) + ")"
+				} else {
+					fval = (fname) + "." + (t[1])
+					tval = tname
+				}
+
+				to += fmt.Sprintf("if %s.Valid {\n %s=%s \n}\n", fname, tname, fval)
+				from += fmt.Sprintf("if %s == %s {\n%s.%s=%s\n%s.Valid=false\n}else{\n%s.%s=%s\n}\n",
+					tname, zeroValue, fname, t[1], zeroValue, fname, fname, t[1], tval)
+				break
+			default:
+				from += (fname + "=" + tname + "\n")
+				to += (tname + "=" + fname + "\n")
+				break
+			}
+		} else if structType == PrefixLogic {
+			switch realType {
+			case "sql.NullInt64", "sql.NullInt", "sql.NullFloat64":
+				reg, _ := regexp.Compile("Null(\\w+)")
+				t := reg.FindStringSubmatch(realType)
+				zeroValue := "0"
+				tfname := "Int64"
+				if t[1] == "Int" || t[1] == "Int64" {
+					zeroValue = "0"
+				} else if t[1] == "Float64" {
+					zeroValue = "0.0"
+					tfname = "Float64"
+				} else {
+					zeroValue = "\"\""
+				}
+				to += fmt.Sprintf("if %s != %s {\n%s=new(json.Number)\n*%s=json.Number(fmt.Sprint(%s))}\n", fname, zeroValue, tname, tname, fval)
+				from += fmt.Sprintf("if %s != nil {\ntemp ,err := (*%s).%s()\nif err != nil {\nreturn err\n}\n%s=%s(temp)\n}\n",
+					tname, tname, tfname, fname, valueType)
+				break
+			case "int", "int64", "float32", "float64":
+				zeroValue := "0"
+				tfname := "Int64"
+				if realType == "float32" || realType == "float64" {
+					zeroValue = "0.0"
+					tfname = "Float64"
+				}
+				to += fmt.Sprintf("if %s != %s {\n%s=json.Number(fmt.Sprint(%s))}\n", fname, zeroValue, tname, fval)
+				from += fmt.Sprintf("{\ntemp ,err := %s.%s()\nif err != nil {\nreturn err\n}\n%s=%s(temp)\n}\n",
+					tname, tfname, fname, valueType)
+				break
+			case "sql.NullString":
+				to += fmt.Sprintf("if %s != \"\" {\n%s=new(%s)\n*%s=%s\n}\n", fname, tname, valueType, tname, fval)
+				from += fmt.Sprintf("if %s != nil {\n%s=*%s\n}\n", tname, fname, tname)
+				break
+			default:
+				from += (fname + "=" + tname + "\n")
+				to += (tname + "=" + fname + "\n")
+				break
+			}
+		}
+
 	}
-	return structure
+	return structure, from, to
+}
+
+func mysqlRealType(mysqlType string, nullable bool, gureguTypes bool, structType string) string {
+	switch mysqlType {
+	case "tinyint", "int", "smallint", "mediumint":
+		if nullable {
+			if gureguTypes {
+				return gureguNullInt
+			}
+			return sqlNullInt
+		}
+		return golangInt
+	case "bigint":
+		if nullable {
+			if gureguTypes {
+				return gureguNullInt
+			}
+			return sqlNullInt64
+		}
+		return golangInt64
+	case "char", "enum", "varchar", "longtext", "mediumtext", "text", "tinytext":
+		if nullable {
+			if gureguTypes {
+				return gureguNullString
+			}
+			return sqlNullString
+		}
+		return "string"
+	case "date", "datetime", "time", "timestamp":
+		if nullable && gureguTypes {
+			return gureguNullTime
+		}
+		return golangTime
+	case "decimal", "double":
+		if nullable {
+			if gureguTypes {
+				return gureguNullFloat
+			}
+			return sqlNullFloat
+		}
+		return golangFloat64
+	case "float":
+		if nullable {
+			if gureguTypes {
+				return gureguNullFloat
+			}
+			return sqlNullFloat
+		}
+		return golangFloat32
+	case "binary", "blob", "longblob", "mediumblob", "varbinary":
+		return golangByteArray
+	}
+	return ""
 }
 
 // mysqlTypeToGoType converts the mysql types to go compatible sql.Nullable (https://golang.org/pkg/database/sql/) types
@@ -122,7 +255,7 @@ func mysqlTypeToGoType(mysqlType string, nullable bool, gureguTypes bool, struct
 			if gureguTypes {
 				return mapping[structType][gureguNullInt]
 			}
-			return mapping[structType][sqlNullInt]
+			return mapping[structType][sqlNullInt64]
 		}
 		return mapping[structType][golangInt64]
 	case "char", "enum", "varchar", "longtext", "mediumtext", "text", "tinytext":
