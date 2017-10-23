@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,7 +32,7 @@ func GetColumnsFromMysqlTable(mariadbUser string, mariadbPassword string, mariad
 	// Store colum as map of maps
 	columnDataTypes := make(map[string]map[string]string)
 	// Select columnd data from INFORMATION_SCHEMA
-	columnDataTypeQuery := "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND table_name = ?"
+	columnDataTypeQuery := "SELECT COLUMN_NAME,DATA_TYPE, COLUMN_TYPE,IS_NULLABLE,COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND table_name = ?"
 
 	if Debug {
 		fmt.Println("running: " + columnDataTypeQuery)
@@ -51,12 +53,17 @@ func GetColumnsFromMysqlTable(mariadbUser string, mariadbPassword string, mariad
 	for rows.Next() {
 		var column string
 		var dataType string
+		var columnType string
 		var nullable string
-		rows.Scan(&column, &dataType, &nullable)
-
-		columnDataTypes[column] = map[string]string{"value": dataType, "nullable": nullable}
+		var defaultValue string
+		rows.Scan(&column, &dataType, &columnType, &nullable, &defaultValue)
+		columnDataTypes[column] = map[string]string{"value": dataType, "nullable": nullable,
+			"type": columnType, "default": defaultValue, "extra": ""}
+		log.Print(columnDataTypes[column])
+		if column == "id" {
+			columnDataTypes[column]["extra"] = "AUTO_INCREMENT"
+		}
 	}
-
 	return &columnDataTypes, err
 }
 
@@ -81,12 +88,17 @@ func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotat
 		var valueType string
 		// If the guregu (https://github.com/guregu/null) CLI option is passed use its types, otherwise use go's sql.NullX
 
-		valueType = mysqlTypeToGoType(mysqlType["value"], nullable, gureguTypes)
+		valueType = mysqlTypeToGoType(mysqlType["value"], mysqlType["type"], nullable, gureguTypes)
 
 		fieldName := fmtFieldName(stringifyFirstChar(key))
 		var annotations []string
 		if gormAnnotation == true {
-			annotations = append(annotations, fmt.Sprintf("gorm:\"column:%s\"", key))
+			var def string
+			if mysqlType["default"] != "" {
+				def = fmt.Sprintf("default:'%s'", mysqlType["default"])
+			}
+			annotations = append(annotations, fmt.Sprintf("gorm:\"column:%s; type:%s %s;%s\"", key, mysqlType["type"], mysqlType["extra"], def))
+
 		}
 		if jsonAnnotation == true {
 			annotations = append(annotations, fmt.Sprintf("json:\"%s\"", key))
@@ -107,20 +119,37 @@ func generateMysqlTypes(obj map[string]map[string]string, depth int, jsonAnnotat
 }
 
 // mysqlTypeToGoType converts the mysql types to go compatible sql.Nullable (https://golang.org/pkg/database/sql/) types
-func mysqlTypeToGoType(mysqlType string, nullable bool, gureguTypes bool) string {
+func mysqlTypeToGoType(mysqlType string, columnType string, nullable bool, gureguTypes bool) string {
+	reg, _ := regexp.Compile("\\w+\\((\\d+)\\)")
+	cls := reg.FindStringSubmatch(columnType)
+	var datalen int
+	if len(cls) == 2 {
+		t, _ := strconv.Atoi(cls[1])
+		datalen = t
+	}
 	switch mysqlType {
 	case "tinyint", "int", "smallint", "mediumint":
 		if nullable {
 			if gureguTypes {
+
 				return gureguNullInt
 			}
+			if datalen == 1 {
+				return sqlNullBool
+			}
 			return sqlNullInt
+		}
+		if datalen == 1 {
+			return golangBool
 		}
 		return golangInt
 	case "bigint":
 		if nullable {
 			if gureguTypes {
 				return gureguNullInt
+			}
+			if datalen >= 18 {
+				return sqlNullInt64
 			}
 			return sqlNullInt
 		}
@@ -132,10 +161,10 @@ func mysqlTypeToGoType(mysqlType string, nullable bool, gureguTypes bool) string
 			}
 			return sqlNullString
 		}
-		return "string"
+		return "optional.String"
 	case "date", "datetime", "time", "timestamp":
-		if nullable && gureguTypes {
-			return gureguNullTime
+		if nullable {
+			return sqlNullTime
 		}
 		return golangTime
 	case "decimal", "double":
